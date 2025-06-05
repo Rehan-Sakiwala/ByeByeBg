@@ -1,0 +1,9 @@
+1.
+npm create vite
+cd client
+npm install
+
+2.
+clean up app.css and index.css
+remove all the images from assets and public folder.
+remove all content from app.jsx file
