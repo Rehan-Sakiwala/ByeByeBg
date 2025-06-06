@@ -1,13 +1,26 @@
 import React, { useState } from "react";
 import { assets } from "../assets/assets";
 import { Menu, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { SignedOut, SignedIn, useClerk, UserButton } from "@clerk/clerk-react";
 
 function Menubar() {
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const { openSignIn, openSignUp } = useClerk();
+
+  const openRegister = () => {
+    openSignUp({});
+  };
+
+  const openLogin = () => {
+    openSignIn({});
+  };
+
   return (
     <nav className="bg-white px-8 py-4 flex justify-between items-center">
       {/* Left side: Logo + text*/}
-      <div className="flex items-center space-x-2">
+      <Link className="flex items-center space-x-2" to="/">
         <img
           src={assets.logo2}
           alt="logo-here"
@@ -17,15 +30,29 @@ function Menubar() {
           ByeBye
           <span className="text-gray-400 cursor-pointer">BG</span>
         </span>
-      </div>
+      </Link>
+
       {/* Right side : Action buttons*/}
       <div className="hidden md:flex items-center space-x-4">
-        <button className="text-gray-700 hover:text-blue-500 font-medium">
-          Login
-        </button>
-        <button className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-full transition-all">
-          Signup
-        </button>
+        {/** Signed out */}
+        <SignedOut>
+          <button
+            className="text-gray-700 hover:text-blue-500 font-medium"
+            onClick={openLogin}
+          >
+            Login
+          </button>
+          <button
+            className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-full transition-all"
+            onClick={openRegister}
+          >
+            Signup
+          </button>
+        </SignedOut>
+
+        <SignedIn>
+          <UserButton />
+        </SignedIn>
       </div>
 
       {/*Mobile hamburger*/}

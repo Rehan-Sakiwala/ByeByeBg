@@ -1,5 +1,6 @@
 import React from "react";
 import { assets } from "../assets/assets";
+import toast from "react-hot-toast";
 
 function Header() {
   return (
@@ -20,8 +21,8 @@ function Header() {
       {/* Right Section: Text content */}
       <div className="order1 md:order-2">
         <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6 leading-tight">
-          One stop solution for{" "}
-          <span className="text-indigo-700">erasing background.</span>
+          Erase the Noise,{" "}
+          <span className="text-indigo-700">Keep What Matters.</span>
         </h1>
         <p className="text-gray-600 mb-8 text-lg leading-relaxed">
           AI Background Removal is a cutting-edge technology that automatically
