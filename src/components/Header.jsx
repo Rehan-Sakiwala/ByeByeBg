@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useContext } from "react";
 import { assets } from "../assets/assets";
 import toast from "react-hot-toast";
+import { AppleIcon } from "lucide-react";
+import { AppContext } from "../context/AppContext";
 
 function Header() {
+  const { removeBg } = useContext(AppContext);
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center mb-16">
       {/* Left Section: Video banner */}
@@ -35,7 +38,13 @@ function Header() {
         </p>
 
         <div>
-          <input type="file" accept="image/*" id="upload1" hidden />
+          <input
+            type="file"
+            accept="image/*"
+            id="upload1"
+            hidden
+            onChange={(e) => removeBg(e.target.files[0])}
+          />
           <label
             htmlFor="upload1"
             className="bg-black text-white font-medium px-8 py-4 rounded-full hover:opacity-60 transition-transform hover:scale-105 text-lg"
