@@ -1,0 +1,688 @@
+package com.capestone.hrms_backend.controller;
+
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/test")
+public class RoleTestController {
+
+    // anyone logged in
+    @GetMapping("/authenticated")
+    public String authenticated(){
+        return "You are authenticated";
+    }
+
+    // only HR role
+    @PreAuthorize("hasRole('HR')")
+    @GetMapping("/hr")
+    public String hr(){
+        return "Welcome HR";
+    }
+
+    // only MANAGER role
+    @PreAuthorize("hasRole('MANAGER')")
+    @GetMapping("/manager")
+    public String manager(){
+        return "Welcome Manager";
+    }
+
+    // only EMPLOYEE role
+    @PreAuthorize("hasRole('EMPLOYEE')")
+    @GetMapping("/employee")
+    public String employee(){
+        return "Welcome Employee";
+    }
+}
+
+
+
+--------------------------
+
+
+
+# TRAVEL PLAN MODULE — COMPLETE (Aligned with your project standards)
+
+Packages assumed:
+com.capestone.hrms_backend
+├─ controller
+├─ service
+│    └─ impl
+├─ dto
+│    ├─ request
+│    └─ response
+├─ entity
+├─ repository
+├─ mapper
+├─ validator
+└─ exception (already exists)
+
+---
+
+## 1️⃣ ENTITY
+
+## File: entity/travel/TravelPlan.java
+
+@Entity
+@Table(name = "travel_plans")
+@Getter @Setter
+public class TravelPlan {
+
+```
+@Id
+@GeneratedValue(strategy = GenerationType.IDENTITY)
+@Column(name="pk_id")
+private Long id;
+
+@ManyToOne(fetch = FetchType.LAZY)
+@JoinColumn(name="fk_created_by", nullable=false)
+private Employee createdBy;
+
+private String title;
+private String description;
+private String destination;
+
+@Column(name="is_cancelled")
+private boolean cancelled = false;
+
+@Column(name="departure_date")
+private LocalDateTime departureDate;
+
+@Column(name="return_date")
+private LocalDateTime returnDate;
+
+@Column(name="created_at")
+private LocalDateTime createdAt;
+
+@Column(name="updated_at")
+private LocalDateTime updatedAt;
+
+@PrePersist
+public void prePersist(){
+    createdAt = LocalDateTime.now();
+    updatedAt = LocalDateTime.now();
+}
+
+@PreUpdate
+public void preUpdate(){
+    updatedAt = LocalDateTime.now();
+}
+```
+
+}
+
+---
+
+## 2️⃣ REPOSITORY
+
+## File: repository/TravelPlanRepository.java
+
+public interface TravelPlanRepository extends JpaRepository<TravelPlan, Long> {
+List<TravelPlan> findByCancelledFalseOrderByDepartureDateAsc();
+}
+
+---
+
+## 3️⃣ DTOs
+
+## File: dto/request/TravelPlanCreateRequestDto.java
+
+@Getter @Setter
+public class TravelPlanCreateRequestDto {
+
+```
+@NotBlank
+private String title;
+
+private String description;
+
+@NotBlank
+private String destination;
+
+@NotNull
+private LocalDateTime departureDate;
+
+@NotNull
+private LocalDateTime returnDate;
+```
+
+}
+
+---
+
+## File: dto/response/TravelPlanResponseDto.java
+
+@Getter @Builder
+public class TravelPlanResponseDto {
+
+```
+private Long id;
+private String title;
+private String destination;
+private String description;
+private boolean cancelled;
+private LocalDateTime departureDate;
+private LocalDateTime returnDate;
+private String createdBy;
+```
+
+}
+
+---
+
+## 4️⃣ VALIDATOR (Business Rules)
+
+## File: validator/TravelPlanValidator.java
+
+@Component
+public class TravelPlanValidator {
+
+```
+public void validateDates(LocalDateTime departure, LocalDateTime returnDate){
+
+    if(departure.isBefore(LocalDateTime.now()))
+        throw new BusinessException("Travel cannot start in the past");
+
+    if(returnDate.isBefore(departure))
+        throw new BusinessException("Return date must be after departure date");
+}
+```
+
+}
+
+---
+
+## 5️⃣ MAPPER
+
+## File: mapper/TravelPlanMapper.java
+
+@Component
+public class TravelPlanMapper {
+
+```
+public TravelPlanResponseDto toDto(TravelPlan plan){
+    return TravelPlanResponseDto.builder()
+            .id(plan.getId())
+            .title(plan.getTitle())
+            .description(plan.getDescription())
+            .destination(plan.getDestination())
+            .cancelled(plan.isCancelled())
+            .departureDate(plan.getDepartureDate())
+            .returnDate(plan.getReturnDate())
+            .createdBy(plan.getCreatedBy().getFirstName()+" "+plan.getCreatedBy().getLastName())
+            .build();
+}
+```
+
+}
+
+---
+
+## 6️⃣ SERVICE INTERFACE
+
+## File: service/TravelPlanService.java
+
+public interface TravelPlanService {
+
+```
+TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId);
+
+List<TravelPlanResponseDto> getAllActive();
+
+TravelPlanResponseDto cancel(Long planId, Long employeeId);
+```
+
+}
+
+---
+
+## 7️⃣ SERVICE IMPLEMENTATION
+
+## File: service/impl/TravelPlanServiceImpl.java
+
+@Service
+@RequiredArgsConstructor
+public class TravelPlanServiceImpl implements TravelPlanService {
+
+```
+private final TravelPlanRepository travelPlanRepository;
+private final EmployeeRepository employeeRepository;
+private final TravelPlanValidator validator;
+private final TravelPlanMapper mapper;
+
+@Override
+public TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId) {
+
+    Employee creator = employeeRepository.findById(employeeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
+
+    if(!creator.getRole().getName().equals("HR"))
+        throw new BusinessException("Only HR can create travel plans");
+
+    validator.validateDates(dto.getDepartureDate(), dto.getReturnDate());
+
+    TravelPlan plan = new TravelPlan();
+    plan.setTitle(dto.getTitle());
+    plan.setDescription(dto.getDescription());
+    plan.setDestination(dto.getDestination());
+    plan.setDepartureDate(dto.getDepartureDate());
+    plan.setReturnDate(dto.getReturnDate());
+    plan.setCreatedBy(creator);
+
+    travelPlanRepository.save(plan);
+
+    return mapper.toDto(plan);
+}
+
+@Override
+public List<TravelPlanResponseDto> getAllActive() {
+    return travelPlanRepository.findByCancelledFalseOrderByDepartureDateAsc()
+            .stream()
+            .map(mapper::toDto)
+            .toList();
+}
+
+@Override
+public TravelPlanResponseDto cancel(Long planId, Long employeeId) {
+
+    Employee emp = employeeRepository.findById(employeeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
+
+    if(!emp.getRole().getName().equals("HR"))
+        throw new BusinessException("Only HR can cancel travel plans");
+
+    TravelPlan plan = travelPlanRepository.findById(planId)
+            .orElseThrow(() -> new ResourceNotFoundException("Travel plan not found"));
+
+    plan.setCancelled(true);
+    travelPlanRepository.save(plan);
+
+    return mapper.toDto(plan);
+}
+```
+
+}
+
+---
+
+## 8️⃣ CONTROLLER
+
+## File: controller/TravelPlanController.java
+
+@RestController
+@RequestMapping("/travel-plans")
+@RequiredArgsConstructor
+public class TravelPlanController {
+
+```
+private final TravelPlanService travelPlanService;
+
+@PreAuthorize("hasRole('HR')")
+@PostMapping
+public ResponseEntity<TravelPlanResponseDto> create(
+        @Valid @RequestBody TravelPlanCreateRequestDto dto,
+        Authentication auth){
+
+    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
+    return ResponseEntity.ok(travelPlanService.create(dto, user.getEmployeeId()));
+}
+
+@GetMapping
+public ResponseEntity<List<TravelPlanResponseDto>> list(){
+    return ResponseEntity.ok(travelPlanService.getAllActive());
+}
+
+@PreAuthorize("hasRole('HR')")
+@PatchMapping("/{id}/cancel")
+public ResponseEntity<TravelPlanResponseDto> cancel(
+        @PathVariable Long id,
+        Authentication auth){
+
+    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
+    return ResponseEntity.ok(travelPlanService.cancel(id, user.getEmployeeId()));
+}
+```
+
+}
+
+---
+
+## END RESULT
+
+✔ Uses ResponseEntity
+✔ Uses DTOs
+✔ Uses Validation annotations
+✔ Uses Mapper class (not entity exposure)
+✔ Uses Service + Impl structure
+✔ Uses GlobalException (BusinessException/ResourceNotFoundException)
+✔ Uses Authorization (@PreAuthorize)
+✔ Clean layered architecture
+✔ Production ready structure
+
+NEXT STEP AFTER THIS MODULE:
+Travel Plan Participants APIs
+(Assign employees to plan)
+--------------------------
+
+# TRAVEL PLAN MODULE — COMPLETE (Aligned with your project standards)
+
+Packages assumed:
+com.capestone.hrms_backend
+├─ controller
+├─ service
+│    └─ impl
+├─ dto
+│    ├─ request
+│    └─ response
+├─ entity
+├─ repository
+├─ mapper
+├─ validator
+└─ exception (already exists)
+
+---
+
+## 1️⃣ ENTITY
+
+## File: entity/travel/TravelPlan.java
+
+@Entity
+@Table(name = "travel_plans")
+@Getter @Setter
+public class TravelPlan {
+
+```
+@Id
+@GeneratedValue(strategy = GenerationType.IDENTITY)
+@Column(name="pk_id")
+private Long id;
+
+@ManyToOne(fetch = FetchType.LAZY)
+@JoinColumn(name="fk_created_by", nullable=false)
+private Employee createdBy;
+
+private String title;
+private String description;
+private String destination;
+
+@Column(name="is_cancelled")
+private boolean cancelled = false;
+
+@Column(name="departure_date")
+private LocalDateTime departureDate;
+
+@Column(name="return_date")
+private LocalDateTime returnDate;
+
+@Column(name="created_at")
+private LocalDateTime createdAt;
+
+@Column(name="updated_at")
+private LocalDateTime updatedAt;
+
+@PrePersist
+public void prePersist(){
+    createdAt = LocalDateTime.now();
+    updatedAt = LocalDateTime.now();
+}
+
+@PreUpdate
+public void preUpdate(){
+    updatedAt = LocalDateTime.now();
+}
+```
+
+}
+
+---
+
+## 2️⃣ REPOSITORY
+
+## File: repository/TravelPlanRepository.java
+
+public interface TravelPlanRepository extends JpaRepository<TravelPlan, Long> {
+List<TravelPlan> findByCancelledFalseOrderByDepartureDateAsc();
+}
+
+---
+
+## 3️⃣ DTOs
+
+## File: dto/request/TravelPlanCreateRequestDto.java
+
+@Getter @Setter
+public class TravelPlanCreateRequestDto {
+
+```
+@NotBlank
+private String title;
+
+private String description;
+
+@NotBlank
+private String destination;
+
+@NotNull
+private LocalDateTime departureDate;
+
+@NotNull
+private LocalDateTime returnDate;
+```
+
+}
+
+---
+
+## File: dto/response/TravelPlanResponseDto.java
+
+@Getter @Builder
+public class TravelPlanResponseDto {
+
+```
+private Long id;
+private String title;
+private String destination;
+private String description;
+private boolean cancelled;
+private LocalDateTime departureDate;
+private LocalDateTime returnDate;
+private String createdBy;
+```
+
+}
+
+---
+
+## 4️⃣ VALIDATOR (Business Rules)
+
+## File: validator/TravelPlanValidator.java
+
+@Component
+public class TravelPlanValidator {
+
+```
+public void validateDates(LocalDateTime departure, LocalDateTime returnDate){
+
+    if(departure.isBefore(LocalDateTime.now()))
+        throw new BusinessException("Travel cannot start in the past");
+
+    if(returnDate.isBefore(departure))
+        throw new BusinessException("Return date must be after departure date");
+}
+```
+
+}
+
+---
+
+## 5️⃣ MAPPER
+
+## File: mapper/TravelPlanMapper.java
+
+@Component
+public class TravelPlanMapper {
+
+```
+public TravelPlanResponseDto toDto(TravelPlan plan){
+    return TravelPlanResponseDto.builder()
+            .id(plan.getId())
+            .title(plan.getTitle())
+            .description(plan.getDescription())
+            .destination(plan.getDestination())
+            .cancelled(plan.isCancelled())
+            .departureDate(plan.getDepartureDate())
+            .returnDate(plan.getReturnDate())
+            .createdBy(plan.getCreatedBy().getFirstName()+" "+plan.getCreatedBy().getLastName())
+            .build();
+}
+```
+
+}
+
+---
+
+## 6️⃣ SERVICE INTERFACE
+
+## File: service/TravelPlanService.java
+
+public interface TravelPlanService {
+
+```
+TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId);
+
+List<TravelPlanResponseDto> getAllActive();
+
+TravelPlanResponseDto cancel(Long planId, Long employeeId);
+```
+
+}
+
+---
+
+## 7️⃣ SERVICE IMPLEMENTATION
+
+## File: service/impl/TravelPlanServiceImpl.java
+
+@Service
+@RequiredArgsConstructor
+public class TravelPlanServiceImpl implements TravelPlanService {
+
+```
+private final TravelPlanRepository travelPlanRepository;
+private final EmployeeRepository employeeRepository;
+private final TravelPlanValidator validator;
+private final TravelPlanMapper mapper;
+
+@Override
+public TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId) {
+
+    Employee creator = employeeRepository.findById(employeeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
+
+    if(!creator.getRole().getName().equals("HR"))
+        throw new BusinessException("Only HR can create travel plans");
+
+    validator.validateDates(dto.getDepartureDate(), dto.getReturnDate());
+
+    TravelPlan plan = new TravelPlan();
+    plan.setTitle(dto.getTitle());
+    plan.setDescription(dto.getDescription());
+    plan.setDestination(dto.getDestination());
+    plan.setDepartureDate(dto.getDepartureDate());
+    plan.setReturnDate(dto.getReturnDate());
+    plan.setCreatedBy(creator);
+
+    travelPlanRepository.save(plan);
+
+    return mapper.toDto(plan);
+}
+
+@Override
+public List<TravelPlanResponseDto> getAllActive() {
+    return travelPlanRepository.findByCancelledFalseOrderByDepartureDateAsc()
+            .stream()
+            .map(mapper::toDto)
+            .toList();
+}
+
+@Override
+public TravelPlanResponseDto cancel(Long planId, Long employeeId) {
+
+    Employee emp = employeeRepository.findById(employeeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
+
+    if(!emp.getRole().getName().equals("HR"))
+        throw new BusinessException("Only HR can cancel travel plans");
+
+    TravelPlan plan = travelPlanRepository.findById(planId)
+            .orElseThrow(() -> new ResourceNotFoundException("Travel plan not found"));
+
+    plan.setCancelled(true);
+    travelPlanRepository.save(plan);
+
+    return mapper.toDto(plan);
+}
+```
+
+}
+
+---
+
+## 8️⃣ CONTROLLER
+
+## File: controller/TravelPlanController.java
+
+@RestController
+@RequestMapping("/travel-plans")
+@RequiredArgsConstructor
+public class TravelPlanController {
+
+```
+private final TravelPlanService travelPlanService;
+
+@PreAuthorize("hasRole('HR')")
+@PostMapping
+public ResponseEntity<TravelPlanResponseDto> create(
+        @Valid @RequestBody TravelPlanCreateRequestDto dto,
+        Authentication auth){
+
+    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
+    return ResponseEntity.ok(travelPlanService.create(dto, user.getEmployeeId()));
+}
+
+@GetMapping
+public ResponseEntity<List<TravelPlanResponseDto>> list(){
+    return ResponseEntity.ok(travelPlanService.getAllActive());
+}
+
+@PreAuthorize("hasRole('HR')")
+@PatchMapping("/{id}/cancel")
+public ResponseEntity<TravelPlanResponseDto> cancel(
+        @PathVariable Long id,
+        Authentication auth){
+
+    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
+    return ResponseEntity.ok(travelPlanService.cancel(id, user.getEmployeeId()));
+}
+```
+
+}
+
+---
+
+## END RESULT
+
+✔ Uses ResponseEntity
+✔ Uses DTOs
+✔ Uses Validation annotations
+✔ Uses Mapper class (not entity exposure)
+✔ Uses Service + Impl structure
+✔ Uses GlobalException (BusinessException/ResourceNotFoundException)
+✔ Uses Authorization (@PreAuthorize)
+✔ Clean layered architecture
+✔ Production ready structure
+
+NEXT STEP AFTER THIS MODULE:
+Travel Plan Participants APIs
+(Assign employees to plan)
+--------------------------
