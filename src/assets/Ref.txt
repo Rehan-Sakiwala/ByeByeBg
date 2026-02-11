@@ -1,688 +1,739 @@
-package com.capestone.hrms_backend.controller;
+public TravelPlanResponse getTravel(Long id){
+    TravelPlan plan = travelPlanRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Travel not found"));
+    return modelMapper.map(plan, TravelPlanResponse.class);
+}
 
-import org.springframework.security.access.prepost.PreAuthorize;
+
+@Transactional
+public void cancelTravel(Long id){
+    TravelPlan plan = travelPlanRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Travel not found"));
+
+    plan.setCancelled(true);
+}
+
+
+@Transactional
+public void addParticipants(Long travelId, List<Long> empIds){
+
+    TravelPlan plan = travelPlanRepository.findById(travelId)
+            .orElseThrow(() -> new ResourceNotFoundException("Travel not found"));
+
+    for(Long empId : empIds){
+        if(participantRepo.findByTravelPlanIdAndEmployeeId(travelId, empId).isPresent())
+            continue;
+
+        Employee emp = employeeRepository.findById(empId)
+                .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
+
+        TravelPlanParticipant tp = new TravelPlanParticipant();
+        tp.setTravelPlan(plan);
+        tp.setEmployee(emp);
+        participantRepo.save(tp);
+    }
+}
+
+
+@Transactional
+public void removeParticipant(Long travelId, Long empId){
+    participantRepo.deleteByTravelPlanIdAndEmployeeId(travelId, empId);
+}
+
+
+public List<ParticipantResponse> getParticipants(Long travelId){
+    return participantRepo.findByTravelPlanId(travelId)
+            .stream()
+            .map(tp -> ParticipantResponse.builder()
+                    .id(tp.getEmployee().getId())
+                    .name(tp.getEmployee().getFirstName()+" "+tp.getEmployee().getLastName())
+                    .email(tp.getEmployee().getUser().getEmail())
+                    .build())
+            .toList();
+}
+
+
+public List<TravelPlanResponse> getMyTravels(Long empId){
+    return participantRepo.findByEmployeeId(empId)
+            .stream()
+            .map(tp -> modelMapper.map(tp.getTravelPlan(), TravelPlanResponse.class))
+            .toList();
+}
+
+
+public List<TravelPlanResponse> listTravels(){
+    return travelPlanRepository.findAll()
+            .stream()
+            .map(tp -> modelMapper.map(tp, TravelPlanResponse.class))
+            .toList();
+}
+
+
+@GetMapping("/{id}")
+@PreAuthorize("hasRole('HR')")
+public ResponseEntity<TravelPlanResponse> getTravel(@PathVariable Long id){
+    return ResponseEntity.ok(travelPlanService.getTravel(id));
+}
+
+@PatchMapping("/{id}/cancel")
+@PreAuthorize("hasRole('HR')")
+public ResponseEntity<Void> cancel(@PathVariable Long id){
+    travelPlanService.cancelTravel(id);
+    return ResponseEntity.ok().build();
+}
+
+@PostMapping("/{id}/participants")
+@PreAuthorize("hasRole('HR')")
+public ResponseEntity<Void> addParticipants(
+        @PathVariable Long id,
+        @Valid @RequestBody AddParticipantsRequest request){
+    travelPlanService.addParticipants(id, request.getEmployeeIds());
+    return ResponseEntity.ok().build();
+}
+
+@DeleteMapping("/{id}/participants/{empId}")
+@PreAuthorize("hasRole('HR')")
+public ResponseEntity<Void> removeParticipant(@PathVariable Long id,@PathVariable Long empId){
+    travelPlanService.removeParticipant(id, empId);
+    return ResponseEntity.ok().build();
+}
+
+@GetMapping("/{id}/participants")
+@PreAuthorize("hasRole('HR')")
+public ResponseEntity<List<ParticipantResponse>> participants(@PathVariable Long id){
+    return ResponseEntity.ok(travelPlanService.getParticipants(id));
+}
+
+@GetMapping("/me")
+public ResponseEntity<List<TravelPlanResponse>> myTravels(@AuthenticationPrincipal HrmsUserDetails user){
+    return ResponseEntity.ok(travelPlanService.getMyTravels(user.getEmployeeId()));
+}
+
+@GetMapping
+@PreAuthorize("hasRole('HR')")
+public ResponseEntity<List<TravelPlanResponse>> list(){
+    return ResponseEntity.ok(travelPlanService.listTravels());
+}
+
+
+=======
+package com.capestone.hrms_backend.entity.travel;
+
+import com.capestone.hrms_backend.entity.organization.Employee;
+import com.capestone.hrms_backend.entity.shared.Base;
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
+@Entity
+@Table(name = "travel_documents")
+@Getter
+@Setter
+public class TravelDocument extends Base {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "fk_travel_id", nullable = false)
+    private TravelPlan travelPlan;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "fk_emp_id", nullable = false)
+    private Employee employee;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "uploaded_by", nullable = false)
+    private Employee uploadedBy;
+
+    @Column(nullable = false)
+    private String documentType;
+
+    private String description;
+
+    @Column(nullable = false)
+    private String fileName;
+
+    private Long fileSize;
+
+    private String fileType;
+
+    @Column(nullable = false)
+    private String filePath;
+}
+
+package com.capestone.hrms_backend.repository.travel;
+
+import com.capestone.hrms_backend.entity.travel.TravelDocument;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface TravelDocumentRepository extends JpaRepository<TravelDocument, Long> {
+
+    List<TravelDocument> findByTravelPlanId(Long travelId);
+}
+
+
+package com.capestone.hrms_backend.dto.response.travel;
+
+import lombok.Builder;
+import lombok.Getter;
+
+@Getter
+@Builder
+public class TravelDocumentResponse {
+
+    private Long id;
+    private String documentType;
+    private String description;
+    private String fileName;
+    private Long fileSize;
+    private String uploadedBy;
+}
+
+
+package com.capestone.hrms_backend.service.storage;
+
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.*;
+import java.util.UUID;
+
+@Service
+public class FileStorageService {
+
+    private final String basePath = "uploads/travel-documents/";
+
+    public String save(Long travelId, MultipartFile file) throws IOException {
+
+        String folder = basePath + travelId + "/";
+        Files.createDirectories(Paths.get(folder));
+
+        String fileName = UUID.randomUUID() + "_" + file.getOriginalFilename();
+
+        Path path = Paths.get(folder + fileName);
+        Files.copy(file.getInputStream(), path, StandardCopyOption.REPLACE_EXISTING);
+
+        return path.toString();
+    }
+
+    public byte[] read(String path) throws IOException {
+        return Files.readAllBytes(Paths.get(path));
+    }
+
+    public void delete(String path) throws IOException {
+        Files.deleteIfExists(Paths.get(path));
+    }
+}
+
+
+package com.capestone.hrms_backend.service.travel;
+
+import com.capestone.hrms_backend.dto.response.travel.TravelDocumentResponse;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+
+public interface ITravelDocumentService {
+
+    TravelDocumentResponse upload(Long travelId, Long empId, String type, String desc, MultipartFile file);
+    List<TravelDocumentResponse> list(Long travelId);
+    byte[] download(Long docId);
+    void delete(Long docId, Long requesterId, String role);
+}
+
+
+package com.capestone.hrms_backend.service.impl.travel;
+
+import com.capestone.hrms_backend.dto.response.travel.TravelDocumentResponse;
+import com.capestone.hrms_backend.entity.organization.Employee;
+import com.capestone.hrms_backend.entity.travel.TravelDocument;
+import com.capestone.hrms_backend.entity.travel.TravelPlan;
+import com.capestone.hrms_backend.exception.ResourceNotFoundException;
+import com.capestone.hrms_backend.repository.organization.EmployeeRepository;
+import com.capestone.hrms_backend.repository.travel.TravelDocumentRepository;
+import com.capestone.hrms_backend.repository.travel.TravelPlanRepository;
+import com.capestone.hrms_backend.service.storage.FileStorageService;
+import com.capestone.hrms_backend.service.travel.ITravelDocumentService;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class TravelDocumentServiceImpl implements ITravelDocumentService {
+
+    private final TravelDocumentRepository docRepo;
+    private final TravelPlanRepository travelRepo;
+    private final EmployeeRepository empRepo;
+    private final FileStorageService storage;
+
+    @Override
+    @Transactional
+    public TravelDocumentResponse upload(Long travelId, Long empId, String type, String desc, MultipartFile file) {
+
+        try {
+            TravelPlan plan = travelRepo.findById(travelId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Travel not found"));
+
+            Employee emp = empRepo.findById(empId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
+
+            String path = storage.save(travelId, file);
+
+            TravelDocument doc = new TravelDocument();
+            doc.setTravelPlan(plan);
+            doc.setEmployee(emp);
+            doc.setUploadedBy(emp);
+            doc.setDocumentType(type);
+            doc.setDescription(desc);
+            doc.setFileName(file.getOriginalFilename());
+            doc.setFileSize(file.getSize());
+            doc.setFileType(file.getContentType());
+            doc.setFilePath(path);
+
+            docRepo.save(doc);
+
+            return TravelDocumentResponse.builder()
+                    .id(doc.getId())
+                    .documentType(doc.getDocumentType())
+                    .description(doc.getDescription())
+                    .fileName(doc.getFileName())
+                    .fileSize(doc.getFileSize())
+                    .uploadedBy(emp.getFirstName())
+                    .build();
+
+        } catch (IOException e) {
+            throw new RuntimeException("File upload failed");
+        }
+    }
+
+    @Override
+    public List<TravelDocumentResponse> list(Long travelId) {
+        return docRepo.findByTravelPlanId(travelId)
+                .stream()
+                .map(d -> TravelDocumentResponse.builder()
+                        .id(d.getId())
+                        .documentType(d.getDocumentType())
+                        .description(d.getDescription())
+                        .fileName(d.getFileName())
+                        .fileSize(d.getFileSize())
+                        .uploadedBy(d.getUploadedBy().getFirstName())
+                        .build())
+                .toList();
+    }
+
+    @Override
+    public byte[] download(Long docId) {
+        try {
+            TravelDocument doc = docRepo.findById(docId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Document not found"));
+            return storage.read(doc.getFilePath());
+        } catch (IOException e) {
+            throw new RuntimeException("Download failed");
+        }
+    }
+
+    @Override
+    @Transactional
+    public void delete(Long docId, Long requesterId, String role) {
+
+        TravelDocument doc = docRepo.findById(docId)
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found"));
+
+        if(!role.equals("HR") && !doc.getUploadedBy().getId().equals(requesterId))
+            throw new RuntimeException("Not allowed");
+
+        try {
+            storage.delete(doc.getFilePath());
+        } catch (IOException ignored) {}
+
+        docRepo.delete(doc);
+    }
+}
+
+
+package com.capestone.hrms_backend.controller.travel;
+
+import com.capestone.hrms_backend.dto.response.travel.TravelDocumentResponse;
+import com.capestone.hrms_backend.security.HrmsUserDetails;
+import com.capestone.hrms_backend.service.travel.ITravelDocumentService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.*;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+
+@RestController
+@RequiredArgsConstructor
+public class TravelDocumentController {
+
+    private final ITravelDocumentService service;
+
+    @PostMapping("/travel-plans/{id}/documents")
+    public ResponseEntity<TravelDocumentResponse> upload(
+            @PathVariable Long id,
+            @RequestParam String documentType,
+            @RequestParam(required = false) String description,
+            @RequestParam MultipartFile file,
+            @AuthenticationPrincipal HrmsUserDetails user
+    ){
+        return ResponseEntity.ok(
+                service.upload(id, user.getEmployeeId(), documentType, description, file)
+        );
+    }
+
+    @GetMapping("/travel-plans/{id}/documents")
+    public ResponseEntity<List<TravelDocumentResponse>> list(@PathVariable Long id){
+        return ResponseEntity.ok(service.list(id));
+    }
+
+    @GetMapping("/travel-documents/{docId}/download")
+    public ResponseEntity<ByteArrayResource> download(@PathVariable Long docId){
+        byte[] data = service.download(docId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(new ByteArrayResource(data));
+    }
+
+    @DeleteMapping("/travel-documents/{docId}")
+    public ResponseEntity<Void> delete(@PathVariable Long docId, @AuthenticationPrincipal HrmsUserDetails user){
+        service.delete(docId, user.getEmployeeId(), user.getRole());
+        return ResponseEntity.ok().build();
+    }
+}
+
+
+package com.capestone.hrms_backend.controller.travel;
+
+import com.capestone.hrms_backend.dto.response.travel.TravelDocumentResponse;
+import com.capestone.hrms_backend.security.HrmsUserDetails;
+import com.capestone.hrms_backend.service.travel.ITravelDocumentService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.*;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+
+@RestController
+@RequiredArgsConstructor
+public class TravelDocumentController {
+
+    private final ITravelDocumentService service;
+
+    @PostMapping("/travel-plans/{id}/documents")
+    public ResponseEntity<TravelDocumentResponse> upload(
+            @PathVariable Long id,
+            @RequestParam String documentType,
+            @RequestParam(required = false) String description,
+            @RequestParam MultipartFile file,
+            @AuthenticationPrincipal HrmsUserDetails user
+    ){
+        return ResponseEntity.ok(
+                service.upload(id, user.getEmployeeId(), documentType, description, file)
+        );
+    }
+
+    @GetMapping("/travel-plans/{id}/documents")
+    public ResponseEntity<List<TravelDocumentResponse>> list(@PathVariable Long id){
+        return ResponseEntity.ok(service.list(id));
+    }
+
+    @GetMapping("/travel-documents/{docId}/download")
+    public ResponseEntity<ByteArrayResource> download(@PathVariable Long docId){
+        byte[] data = service.download(docId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(new ByteArrayResource(data));
+    }
+
+    @DeleteMapping("/travel-documents/{docId}")
+    public ResponseEntity<Void> delete(@PathVariable Long docId, @AuthenticationPrincipal HrmsUserDetails user){
+        service.delete(docId, user.getEmployeeId(), user.getRole());
+        return ResponseEntity.ok().build();
+    }
+}
+
+package com.capestone.hrms_backend.entity.expense;
+
+public enum ExpenseStatus {
+    PENDING,
+    APPROVED,
+    REJECTED
+}
+
+
+package com.capestone.hrms_backend.entity.expense;
+
+public enum CurrencyType {
+    INR,
+    USD,
+    EUR
+}
+
+
+package com.capestone.hrms_backend.entity.expense;
+
+import com.capestone.hrms_backend.entity.organization.Employee;
+import com.capestone.hrms_backend.entity.shared.Base;
+import com.capestone.hrms_backend.entity.travel.TravelPlan;
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "expenses")
+@Getter
+@Setter
+public class Expense extends Base {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "fk_travel_id", nullable = false)
+    private TravelPlan travelPlan;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "fk_emp_id", nullable = false)
+    private Employee employee;
+
+    @Column(name = "exp_date", nullable = false)
+    private LocalDateTime expenseDate;
+
+    @Column(nullable = false)
+    private String description;
+
+    @Column(nullable = false, precision = 12, scale = 2)
+    private BigDecimal amount;
+
+    @Enumerated(EnumType.STRING)
+    private CurrencyType currency;
+
+    @Enumerated(EnumType.STRING)
+    private ExpenseStatus status = ExpenseStatus.PENDING;
+}
+
+
+package com.capestone.hrms_backend.repository.expense;
+
+import com.capestone.hrms_backend.entity.expense.Expense;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface ExpenseRepository extends JpaRepository<Expense, Long> {
+
+    List<Expense> findByTravelPlanId(Long travelId);
+
+    List<Expense> findByEmployeeId(Long empId);
+}
+
+
+package com.capestone.hrms_backend.dto.request.expense;
+
+import com.capestone.hrms_backend.entity.expense.CurrencyType;
+import jakarta.validation.constraints.*;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
+public class CreateExpenseRequest {
+
+    @NotNull
+    private LocalDateTime expenseDate;
+
+    @NotBlank
+    private String description;
+
+    @NotNull
+    @DecimalMin(value = "0.01")
+    private BigDecimal amount;
+
+    @NotNull
+    private CurrencyType currency;
+}
+
+
+package com.capestone.hrms_backend.dto.response.expense;
+
+import com.capestone.hrms_backend.entity.expense.CurrencyType;
+import com.capestone.hrms_backend.entity.expense.ExpenseStatus;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
+public class ExpenseResponse {
+
+    private Long id;
+    private Long travelId;
+    private LocalDateTime expenseDate;
+    private String description;
+    private BigDecimal amount;
+    private CurrencyType currency;
+    private ExpenseStatus status;
+}
+
+
+package com.capestone.hrms_backend.service.expense;
+
+import com.capestone.hrms_backend.dto.request.expense.CreateExpenseRequest;
+import com.capestone.hrms_backend.dto.response.expense.ExpenseResponse;
+
+import java.util.List;
+
+public interface IExpenseService {
+
+    ExpenseResponse create(Long travelId, Long employeeId, CreateExpenseRequest request);
+    List<ExpenseResponse> getTravelExpenses(Long travelId);
+    List<ExpenseResponse> myExpenses(Long empId);
+}
+
+
+package com.capestone.hrms_backend.service.impl.expense;
+
+import com.capestone.hrms_backend.dto.request.expense.CreateExpenseRequest;
+import com.capestone.hrms_backend.dto.response.expense.ExpenseResponse;
+import com.capestone.hrms_backend.entity.expense.Expense;
+import com.capestone.hrms_backend.entity.organization.Employee;
+import com.capestone.hrms_backend.entity.travel.TravelPlan;
+import com.capestone.hrms_backend.exception.ResourceNotFoundException;
+import com.capestone.hrms_backend.repository.expense.ExpenseRepository;
+import com.capestone.hrms_backend.repository.organization.EmployeeRepository;
+import com.capestone.hrms_backend.repository.travel.TravelPlanParticipantRepository;
+import com.capestone.hrms_backend.repository.travel.TravelPlanRepository;
+import com.capestone.hrms_backend.service.expense.IExpenseService;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+import org.modelmapper.ModelMapper;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class ExpenseServiceImpl implements IExpenseService {
+
+    private final ExpenseRepository expenseRepo;
+    private final TravelPlanRepository travelRepo;
+    private final EmployeeRepository empRepo;
+    private final TravelPlanParticipantRepository participantRepo;
+    private final ModelMapper mapper;
+
+    @Override
+    @Transactional
+    public ExpenseResponse create(Long travelId, Long employeeId, CreateExpenseRequest request) {
+
+        if(participantRepo.findByTravelPlanIdAndEmployeeId(travelId, employeeId).isEmpty())
+            throw new RuntimeException("You are not participant of this travel");
+
+        TravelPlan travel = travelRepo.findById(travelId)
+                .orElseThrow(() -> new ResourceNotFoundException("Travel not found"));
+
+        Employee emp = empRepo.findById(employeeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
+
+        Expense expense = new Expense();
+        expense.setTravelPlan(travel);
+        expense.setEmployee(emp);
+        expense.setExpenseDate(request.getExpenseDate());
+        expense.setDescription(request.getDescription());
+        expense.setAmount(request.getAmount());
+        expense.setCurrency(request.getCurrency());
+
+        expenseRepo.save(expense);
+
+        ExpenseResponse res = mapper.map(expense, ExpenseResponse.class);
+        res.setTravelId(travelId);
+        return res;
+    }
+
+    @Override
+    public List<ExpenseResponse> getTravelExpenses(Long travelId){
+        return expenseRepo.findByTravelPlanId(travelId)
+                .stream()
+                .map(e -> {
+                    ExpenseResponse r = mapper.map(e, ExpenseResponse.class);
+                    r.setTravelId(travelId);
+                    return r;
+                }).toList();
+    }
+
+    @Override
+    public List<ExpenseResponse> myExpenses(Long empId){
+        return expenseRepo.findByEmployeeId(empId)
+                .stream()
+                .map(e -> {
+                    ExpenseResponse r = mapper.map(e, ExpenseResponse.class);
+                    r.setTravelId(e.getTravelPlan().getId());
+                    return r;
+                }).toList();
+    }
+}
+package com.capestone.hrms_backend.controller.expense;
+
+import com.capestone.hrms_backend.dto.request.expense.CreateExpenseRequest;
+import com.capestone.hrms_backend.dto.response.expense.ExpenseResponse;
+import com.capestone.hrms_backend.security.HrmsUserDetails;
+import com.capestone.hrms_backend.service.expense.IExpenseService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-@RestController
-@RequestMapping("/test")
-public class RoleTestController {
-
-    // anyone logged in
-    @GetMapping("/authenticated")
-    public String authenticated(){
-        return "You are authenticated";
-    }
-
-    // only HR role
-    @PreAuthorize("hasRole('HR')")
-    @GetMapping("/hr")
-    public String hr(){
-        return "Welcome HR";
-    }
-
-    // only MANAGER role
-    @PreAuthorize("hasRole('MANAGER')")
-    @GetMapping("/manager")
-    public String manager(){
-        return "Welcome Manager";
-    }
-
-    // only EMPLOYEE role
-    @PreAuthorize("hasRole('EMPLOYEE')")
-    @GetMapping("/employee")
-    public String employee(){
-        return "Welcome Employee";
-    }
-}
-
-
-
---------------------------
-
-
-
-# TRAVEL PLAN MODULE — COMPLETE (Aligned with your project standards)
-
-Packages assumed:
-com.capestone.hrms_backend
-├─ controller
-├─ service
-│    └─ impl
-├─ dto
-│    ├─ request
-│    └─ response
-├─ entity
-├─ repository
-├─ mapper
-├─ validator
-└─ exception (already exists)
-
----
-
-## 1️⃣ ENTITY
-
-## File: entity/travel/TravelPlan.java
-
-@Entity
-@Table(name = "travel_plans")
-@Getter @Setter
-public class TravelPlan {
-
-```
-@Id
-@GeneratedValue(strategy = GenerationType.IDENTITY)
-@Column(name="pk_id")
-private Long id;
-
-@ManyToOne(fetch = FetchType.LAZY)
-@JoinColumn(name="fk_created_by", nullable=false)
-private Employee createdBy;
-
-private String title;
-private String description;
-private String destination;
-
-@Column(name="is_cancelled")
-private boolean cancelled = false;
-
-@Column(name="departure_date")
-private LocalDateTime departureDate;
-
-@Column(name="return_date")
-private LocalDateTime returnDate;
-
-@Column(name="created_at")
-private LocalDateTime createdAt;
-
-@Column(name="updated_at")
-private LocalDateTime updatedAt;
-
-@PrePersist
-public void prePersist(){
-    createdAt = LocalDateTime.now();
-    updatedAt = LocalDateTime.now();
-}
-
-@PreUpdate
-public void preUpdate(){
-    updatedAt = LocalDateTime.now();
-}
-```
-
-}
-
----
-
-## 2️⃣ REPOSITORY
-
-## File: repository/TravelPlanRepository.java
-
-public interface TravelPlanRepository extends JpaRepository<TravelPlan, Long> {
-List<TravelPlan> findByCancelledFalseOrderByDepartureDateAsc();
-}
-
----
-
-## 3️⃣ DTOs
-
-## File: dto/request/TravelPlanCreateRequestDto.java
-
-@Getter @Setter
-public class TravelPlanCreateRequestDto {
-
-```
-@NotBlank
-private String title;
-
-private String description;
-
-@NotBlank
-private String destination;
-
-@NotNull
-private LocalDateTime departureDate;
-
-@NotNull
-private LocalDateTime returnDate;
-```
-
-}
-
----
-
-## File: dto/response/TravelPlanResponseDto.java
-
-@Getter @Builder
-public class TravelPlanResponseDto {
-
-```
-private Long id;
-private String title;
-private String destination;
-private String description;
-private boolean cancelled;
-private LocalDateTime departureDate;
-private LocalDateTime returnDate;
-private String createdBy;
-```
-
-}
-
----
-
-## 4️⃣ VALIDATOR (Business Rules)
-
-## File: validator/TravelPlanValidator.java
-
-@Component
-public class TravelPlanValidator {
-
-```
-public void validateDates(LocalDateTime departure, LocalDateTime returnDate){
-
-    if(departure.isBefore(LocalDateTime.now()))
-        throw new BusinessException("Travel cannot start in the past");
-
-    if(returnDate.isBefore(departure))
-        throw new BusinessException("Return date must be after departure date");
-}
-```
-
-}
-
----
-
-## 5️⃣ MAPPER
-
-## File: mapper/TravelPlanMapper.java
-
-@Component
-public class TravelPlanMapper {
-
-```
-public TravelPlanResponseDto toDto(TravelPlan plan){
-    return TravelPlanResponseDto.builder()
-            .id(plan.getId())
-            .title(plan.getTitle())
-            .description(plan.getDescription())
-            .destination(plan.getDestination())
-            .cancelled(plan.isCancelled())
-            .departureDate(plan.getDepartureDate())
-            .returnDate(plan.getReturnDate())
-            .createdBy(plan.getCreatedBy().getFirstName()+" "+plan.getCreatedBy().getLastName())
-            .build();
-}
-```
-
-}
-
----
-
-## 6️⃣ SERVICE INTERFACE
-
-## File: service/TravelPlanService.java
-
-public interface TravelPlanService {
-
-```
-TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId);
-
-List<TravelPlanResponseDto> getAllActive();
-
-TravelPlanResponseDto cancel(Long planId, Long employeeId);
-```
-
-}
-
----
-
-## 7️⃣ SERVICE IMPLEMENTATION
-
-## File: service/impl/TravelPlanServiceImpl.java
-
-@Service
-@RequiredArgsConstructor
-public class TravelPlanServiceImpl implements TravelPlanService {
-
-```
-private final TravelPlanRepository travelPlanRepository;
-private final EmployeeRepository employeeRepository;
-private final TravelPlanValidator validator;
-private final TravelPlanMapper mapper;
-
-@Override
-public TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId) {
-
-    Employee creator = employeeRepository.findById(employeeId)
-            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
-
-    if(!creator.getRole().getName().equals("HR"))
-        throw new BusinessException("Only HR can create travel plans");
-
-    validator.validateDates(dto.getDepartureDate(), dto.getReturnDate());
-
-    TravelPlan plan = new TravelPlan();
-    plan.setTitle(dto.getTitle());
-    plan.setDescription(dto.getDescription());
-    plan.setDestination(dto.getDestination());
-    plan.setDepartureDate(dto.getDepartureDate());
-    plan.setReturnDate(dto.getReturnDate());
-    plan.setCreatedBy(creator);
-
-    travelPlanRepository.save(plan);
-
-    return mapper.toDto(plan);
-}
-
-@Override
-public List<TravelPlanResponseDto> getAllActive() {
-    return travelPlanRepository.findByCancelledFalseOrderByDepartureDateAsc()
-            .stream()
-            .map(mapper::toDto)
-            .toList();
-}
-
-@Override
-public TravelPlanResponseDto cancel(Long planId, Long employeeId) {
-
-    Employee emp = employeeRepository.findById(employeeId)
-            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
-
-    if(!emp.getRole().getName().equals("HR"))
-        throw new BusinessException("Only HR can cancel travel plans");
-
-    TravelPlan plan = travelPlanRepository.findById(planId)
-            .orElseThrow(() -> new ResourceNotFoundException("Travel plan not found"));
-
-    plan.setCancelled(true);
-    travelPlanRepository.save(plan);
-
-    return mapper.toDto(plan);
-}
-```
-
-}
-
----
-
-## 8️⃣ CONTROLLER
-
-## File: controller/TravelPlanController.java
+import java.util.List;
 
 @RestController
-@RequestMapping("/travel-plans")
 @RequiredArgsConstructor
-public class TravelPlanController {
+public class ExpenseController {
 
-```
-private final TravelPlanService travelPlanService;
+    private final IExpenseService expenseService;
 
-@PreAuthorize("hasRole('HR')")
-@PostMapping
-public ResponseEntity<TravelPlanResponseDto> create(
-        @Valid @RequestBody TravelPlanCreateRequestDto dto,
-        Authentication auth){
+    @PostMapping("/travel-plans/{travelId}/expenses")
+    public ResponseEntity<ExpenseResponse> create(
+            @PathVariable Long travelId,
+            @Valid @RequestBody CreateExpenseRequest request,
+            @AuthenticationPrincipal HrmsUserDetails user
+    ){
+        return ResponseEntity.ok(
+                expenseService.create(travelId, user.getEmployeeId(), request)
+        );
+    }
 
-    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
-    return ResponseEntity.ok(travelPlanService.create(dto, user.getEmployeeId()));
+    @GetMapping("/travel-plans/{travelId}/expenses")
+    public ResponseEntity<List<ExpenseResponse>> travelExpenses(@PathVariable Long travelId){
+        return ResponseEntity.ok(expenseService.getTravelExpenses(travelId));
+    }
+
+    @GetMapping("/me/expenses")
+    public ResponseEntity<List<ExpenseResponse>> myExpenses(@AuthenticationPrincipal HrmsUserDetails user){
+        return ResponseEntity.ok(expenseService.myExpenses(user.getEmployeeId()));
+    }
 }
-
-@GetMapping
-public ResponseEntity<List<TravelPlanResponseDto>> list(){
-    return ResponseEntity.ok(travelPlanService.getAllActive());
-}
-
-@PreAuthorize("hasRole('HR')")
-@PatchMapping("/{id}/cancel")
-public ResponseEntity<TravelPlanResponseDto> cancel(
-        @PathVariable Long id,
-        Authentication auth){
-
-    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
-    return ResponseEntity.ok(travelPlanService.cancel(id, user.getEmployeeId()));
-}
-```
-
-}
-
----
-
-## END RESULT
-
-✔ Uses ResponseEntity
-✔ Uses DTOs
-✔ Uses Validation annotations
-✔ Uses Mapper class (not entity exposure)
-✔ Uses Service + Impl structure
-✔ Uses GlobalException (BusinessException/ResourceNotFoundException)
-✔ Uses Authorization (@PreAuthorize)
-✔ Clean layered architecture
-✔ Production ready structure
-
-NEXT STEP AFTER THIS MODULE:
-Travel Plan Participants APIs
-(Assign employees to plan)
---------------------------
-
-# TRAVEL PLAN MODULE — COMPLETE (Aligned with your project standards)
-
-Packages assumed:
-com.capestone.hrms_backend
-├─ controller
-├─ service
-│    └─ impl
-├─ dto
-│    ├─ request
-│    └─ response
-├─ entity
-├─ repository
-├─ mapper
-├─ validator
-└─ exception (already exists)
-
----
-
-## 1️⃣ ENTITY
-
-## File: entity/travel/TravelPlan.java
-
-@Entity
-@Table(name = "travel_plans")
-@Getter @Setter
-public class TravelPlan {
-
-```
-@Id
-@GeneratedValue(strategy = GenerationType.IDENTITY)
-@Column(name="pk_id")
-private Long id;
-
-@ManyToOne(fetch = FetchType.LAZY)
-@JoinColumn(name="fk_created_by", nullable=false)
-private Employee createdBy;
-
-private String title;
-private String description;
-private String destination;
-
-@Column(name="is_cancelled")
-private boolean cancelled = false;
-
-@Column(name="departure_date")
-private LocalDateTime departureDate;
-
-@Column(name="return_date")
-private LocalDateTime returnDate;
-
-@Column(name="created_at")
-private LocalDateTime createdAt;
-
-@Column(name="updated_at")
-private LocalDateTime updatedAt;
-
-@PrePersist
-public void prePersist(){
-    createdAt = LocalDateTime.now();
-    updatedAt = LocalDateTime.now();
-}
-
-@PreUpdate
-public void preUpdate(){
-    updatedAt = LocalDateTime.now();
-}
-```
-
-}
-
----
-
-## 2️⃣ REPOSITORY
-
-## File: repository/TravelPlanRepository.java
-
-public interface TravelPlanRepository extends JpaRepository<TravelPlan, Long> {
-List<TravelPlan> findByCancelledFalseOrderByDepartureDateAsc();
-}
-
----
-
-## 3️⃣ DTOs
-
-## File: dto/request/TravelPlanCreateRequestDto.java
-
-@Getter @Setter
-public class TravelPlanCreateRequestDto {
-
-```
-@NotBlank
-private String title;
-
-private String description;
-
-@NotBlank
-private String destination;
-
-@NotNull
-private LocalDateTime departureDate;
-
-@NotNull
-private LocalDateTime returnDate;
-```
-
-}
-
----
-
-## File: dto/response/TravelPlanResponseDto.java
-
-@Getter @Builder
-public class TravelPlanResponseDto {
-
-```
-private Long id;
-private String title;
-private String destination;
-private String description;
-private boolean cancelled;
-private LocalDateTime departureDate;
-private LocalDateTime returnDate;
-private String createdBy;
-```
-
-}
-
----
-
-## 4️⃣ VALIDATOR (Business Rules)
-
-## File: validator/TravelPlanValidator.java
-
-@Component
-public class TravelPlanValidator {
-
-```
-public void validateDates(LocalDateTime departure, LocalDateTime returnDate){
-
-    if(departure.isBefore(LocalDateTime.now()))
-        throw new BusinessException("Travel cannot start in the past");
-
-    if(returnDate.isBefore(departure))
-        throw new BusinessException("Return date must be after departure date");
-}
-```
-
-}
-
----
-
-## 5️⃣ MAPPER
-
-## File: mapper/TravelPlanMapper.java
-
-@Component
-public class TravelPlanMapper {
-
-```
-public TravelPlanResponseDto toDto(TravelPlan plan){
-    return TravelPlanResponseDto.builder()
-            .id(plan.getId())
-            .title(plan.getTitle())
-            .description(plan.getDescription())
-            .destination(plan.getDestination())
-            .cancelled(plan.isCancelled())
-            .departureDate(plan.getDepartureDate())
-            .returnDate(plan.getReturnDate())
-            .createdBy(plan.getCreatedBy().getFirstName()+" "+plan.getCreatedBy().getLastName())
-            .build();
-}
-```
-
-}
-
----
-
-## 6️⃣ SERVICE INTERFACE
-
-## File: service/TravelPlanService.java
-
-public interface TravelPlanService {
-
-```
-TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId);
-
-List<TravelPlanResponseDto> getAllActive();
-
-TravelPlanResponseDto cancel(Long planId, Long employeeId);
-```
-
-}
-
----
-
-## 7️⃣ SERVICE IMPLEMENTATION
-
-## File: service/impl/TravelPlanServiceImpl.java
-
-@Service
-@RequiredArgsConstructor
-public class TravelPlanServiceImpl implements TravelPlanService {
-
-```
-private final TravelPlanRepository travelPlanRepository;
-private final EmployeeRepository employeeRepository;
-private final TravelPlanValidator validator;
-private final TravelPlanMapper mapper;
-
-@Override
-public TravelPlanResponseDto create(TravelPlanCreateRequestDto dto, Long employeeId) {
-
-    Employee creator = employeeRepository.findById(employeeId)
-            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
-
-    if(!creator.getRole().getName().equals("HR"))
-        throw new BusinessException("Only HR can create travel plans");
-
-    validator.validateDates(dto.getDepartureDate(), dto.getReturnDate());
-
-    TravelPlan plan = new TravelPlan();
-    plan.setTitle(dto.getTitle());
-    plan.setDescription(dto.getDescription());
-    plan.setDestination(dto.getDestination());
-    plan.setDepartureDate(dto.getDepartureDate());
-    plan.setReturnDate(dto.getReturnDate());
-    plan.setCreatedBy(creator);
-
-    travelPlanRepository.save(plan);
-
-    return mapper.toDto(plan);
-}
-
-@Override
-public List<TravelPlanResponseDto> getAllActive() {
-    return travelPlanRepository.findByCancelledFalseOrderByDepartureDateAsc()
-            .stream()
-            .map(mapper::toDto)
-            .toList();
-}
-
-@Override
-public TravelPlanResponseDto cancel(Long planId, Long employeeId) {
-
-    Employee emp = employeeRepository.findById(employeeId)
-            .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
-
-    if(!emp.getRole().getName().equals("HR"))
-        throw new BusinessException("Only HR can cancel travel plans");
-
-    TravelPlan plan = travelPlanRepository.findById(planId)
-            .orElseThrow(() -> new ResourceNotFoundException("Travel plan not found"));
-
-    plan.setCancelled(true);
-    travelPlanRepository.save(plan);
-
-    return mapper.toDto(plan);
-}
-```
-
-}
-
----
-
-## 8️⃣ CONTROLLER
-
-## File: controller/TravelPlanController.java
-
-@RestController
-@RequestMapping("/travel-plans")
-@RequiredArgsConstructor
-public class TravelPlanController {
-
-```
-private final TravelPlanService travelPlanService;
-
-@PreAuthorize("hasRole('HR')")
-@PostMapping
-public ResponseEntity<TravelPlanResponseDto> create(
-        @Valid @RequestBody TravelPlanCreateRequestDto dto,
-        Authentication auth){
-
-    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
-    return ResponseEntity.ok(travelPlanService.create(dto, user.getEmployeeId()));
-}
-
-@GetMapping
-public ResponseEntity<List<TravelPlanResponseDto>> list(){
-    return ResponseEntity.ok(travelPlanService.getAllActive());
-}
-
-@PreAuthorize("hasRole('HR')")
-@PatchMapping("/{id}/cancel")
-public ResponseEntity<TravelPlanResponseDto> cancel(
-        @PathVariable Long id,
-        Authentication auth){
-
-    HrmsUserDetails user = (HrmsUserDetails) auth.getPrincipal();
-    return ResponseEntity.ok(travelPlanService.cancel(id, user.getEmployeeId()));
-}
-```
-
-}
-
----
-
-## END RESULT
-
-✔ Uses ResponseEntity
-✔ Uses DTOs
-✔ Uses Validation annotations
-✔ Uses Mapper class (not entity exposure)
-✔ Uses Service + Impl structure
-✔ Uses GlobalException (BusinessException/ResourceNotFoundException)
-✔ Uses Authorization (@PreAuthorize)
-✔ Clean layered architecture
-✔ Production ready structure
-
-NEXT STEP AFTER THIS MODULE:
-Travel Plan Participants APIs
-(Assign employees to plan)
---------------------------
